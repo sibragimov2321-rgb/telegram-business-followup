@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from ..config import Settings
@@ -10,9 +10,24 @@ from ..services.business import cancel_client_queue
 
 def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Router:
     router=Router(name="admin")
+    menu = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Статус"), KeyboardButton(text="📅 Сегодня")],
+            [KeyboardButton(text="📋 Очередь"), KeyboardButton(text="👥 Клиенты")],
+            [KeyboardButton(text="📝 Скрипты"), KeyboardButton(text="📈 Статистика")],
+            [KeyboardButton(text="⏸ Пауза всех"), KeyboardButton(text="▶️ Возобновить всех")],
+            [KeyboardButton(text="⛔ Остановить очередь")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите действие",
+    )
     def allowed(m: Message): return bool(m.from_user and m.from_user.id in settings.admins)
     async def reply(m: Message, text: str):
         if allowed(m): await m.answer(text)
+    @router.message(Command("start"))
+    async def start(m: Message):
+        if allowed(m): await m.answer("Панель управления ботом:", reply_markup=menu)
     @router.message(Command("status"))
     async def status(m: Message): await reply(m, f"automation={settings.automation_enabled}; limit={settings.daily_limit}; inactive={settings.inactive_days}d")
     @router.message(Command("today"))
@@ -61,6 +76,27 @@ def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Rou
     async def scripts(m: Message):
         async with session_factory() as s: rows=(await s.scalars(select(Script).where(Script.active.is_(True)))).all()
         await reply(m, "\n".join(f"{x.id}: {x.title} [{x.language}/{x.category}]" for x in rows) or "Нет активных скриптов")
+
+    # Кнопки нижнего меню дублируют основные команды администратора.
+    @router.message(F.text == "📊 Статус")
+    async def menu_status(m: Message): await status(m)
+    @router.message(F.text == "📅 Сегодня")
+    async def menu_today(m: Message): await today(m)
+    @router.message(F.text == "📋 Очередь")
+    async def menu_queue(m: Message): await queue(m)
+    @router.message(F.text == "👥 Клиенты")
+    async def menu_clients(m: Message): await clients(m)
+    @router.message(F.text == "📝 Скрипты")
+    async def menu_scripts(m: Message): await scripts(m)
+    @router.message(F.text == "📈 Статистика")
+    async def menu_stats(m: Message): await stats(m)
+    @router.message(F.text.in_({"⏸ Пауза всех", "▶️ Возобновить всех", "⛔ Остановить очередь"}))
+    async def menu_all_action(m: Message):
+        if not allowed(m): return
+        action = {"⏸ Пауза всех": "pause_all", "▶️ Возобновить всех": "resume_all", "⛔ Остановить очередь": "stop_all"}[m.text]
+        class _Command:
+            command = action
+        await all_action(m, _Command())
     @router.message(Command(commands=["set_limit","set_days"]))
     async def change_setting(m: Message, command: CommandObject):
         if not allowed(m): return
