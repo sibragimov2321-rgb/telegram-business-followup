@@ -24,8 +24,8 @@ def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Rou
     )
     def allowed(m: Message): return bool(m.from_user and m.from_user.id in settings.admins)
     async def reply(m: Message, text: str):
-        if allowed(m): await m.answer(text)
-    @router.message(Command("start"))
+        if allowed(m): await m.answer(text, reply_markup=menu)
+    @router.message(Command(commands=["start", "menu"]))
     async def start(m: Message):
         if allowed(m): await m.answer("Панель управления ботом:", reply_markup=menu)
     @router.message(Command("status"))
@@ -51,16 +51,16 @@ def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Rou
     async def client_action(m: Message, command: CommandObject):
         if not allowed(m): return
         try: uid=int(command.args or "")
-        except ValueError: await m.answer("Укажите USER_ID"); return
+        except ValueError: await m.answer("Укажите USER_ID", reply_markup=menu); return
         field={"exclude":"excluded","include":"excluded","pause":"paused","resume":"paused"}[command.command]
         value=command.command in {"exclude","pause"}
         async with session_factory() as s:
             c=await s.scalar(select(Client).where(Client.telegram_user_id==uid))
-            if not c: await m.answer("Клиент не найден"); return
+            if not c: await m.answer("Клиент не найден", reply_markup=menu); return
             setattr(c,field,value)
             if value: await s.flush(); await cancel_client_queue(s,c.id)
             await s.commit()
-        await m.answer("Готово")
+        await m.answer("Готово", reply_markup=menu)
     @router.message(Command(commands=["pause_all","resume_all","stop_all"]))
     async def all_action(m: Message, command: CommandObject):
         if not allowed(m): return
@@ -69,7 +69,7 @@ def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Rou
             elif command.command=="resume_all": await s.execute(update(Client).values(paused=False)); await s.execute(update(FollowupQueue).where(FollowupQueue.status==QueueStatus.paused).values(status=QueueStatus.pending))
             else: await s.execute(update(FollowupQueue).where(FollowupQueue.status.in_([QueueStatus.pending,QueueStatus.paused])).values(status=QueueStatus.cancelled))
             await s.commit()
-        await m.answer("Готово")
+        await m.answer("Готово", reply_markup=menu)
     @router.message(Command("stats"))
     async def stats(m: Message): await reply(m, f"Успешных: {await _log_count(session_factory, 'sent')}; исключено: {await _client_count(session_factory, Client.excluded.is_(True))}")
     @router.message(Command("scripts"))
@@ -101,10 +101,10 @@ def admin_router(session_factory: async_sessionmaker, settings: Settings) -> Rou
     async def change_setting(m: Message, command: CommandObject):
         if not allowed(m): return
         try: value=int(command.args or "")
-        except ValueError: await m.answer("Укажите целое число"); return
+        except ValueError: await m.answer("Укажите целое число", reply_markup=menu); return
         if command.command=="set_limit": settings.daily_limit=max(1,value)
         else: settings.repeat_after_days=max(1,value)
-        await m.answer("Настройка применена до перезапуска. Для постоянного значения измените Railway variable.")
+        await m.answer("Настройка применена до перезапуска. Для постоянного значения измените Railway variable.", reply_markup=menu)
     return router
 
 async def _client_count(factory, clause=None):
