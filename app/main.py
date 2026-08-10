@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, Router
-from aiogram.types import BusinessConnection, Message
+from aiogram.types import BotCommand, BusinessConnection, MenuButtonCommands, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -45,6 +45,20 @@ async def lifespan(app: FastAPI):
     global bot
     if not settings.bot_token: raise RuntimeError("BOT_TOKEN is required")
     bot=Bot(settings.bot_token)
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Панель управления"),
+        BotCommand(command="status", description="Статус автоматизации"),
+        BotCommand(command="today", description="Результаты за сегодня"),
+        BotCommand(command="queue", description="Очередь follow-up"),
+        BotCommand(command="clients", description="Количество клиентов"),
+        BotCommand(command="stats", description="Статистика отправок"),
+        BotCommand(command="scripts", description="Активные скрипты"),
+    ])
+    for admin_id in settings.admins:
+        try:
+            await bot.set_chat_menu_button(chat_id=admin_id, menu_button=MenuButtonCommands())
+        except Exception:
+            pass
     dp=Dispatcher()
     dp.include_router(admin_router(SessionLocal, settings)); dp.include_router(business_router(SessionLocal))
     scheduler.add_job(build_daily_queue, "cron", hour=10, minute=0, args=[SessionLocal, settings], id="daily_queue", replace_existing=True)
