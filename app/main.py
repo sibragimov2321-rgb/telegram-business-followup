@@ -1,11 +1,14 @@
 import asyncio
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, Router
-from aiogram.types import BotCommand, BusinessConnection, MenuButtonCommands, Message
+from aiogram.filters import Command
+from aiogram.types import BotCommand, BusinessConnection, MenuButtonCommands, Message, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from .config import get_settings
 from .database import SessionLocal
@@ -13,8 +16,10 @@ from .handlers.admin import admin_router
 from .models import BusinessConnection as BusinessConnectionModel
 from .services.business import save_business_message
 from .services.scheduler import build_daily_queue, dispatch_due
+from .webapp import router as webapp_router
 
 settings=get_settings()
+WEBAPP_URL = settings.webapp_url.rstrip("/")
 bot: Bot | None = None
 scheduler=AsyncIOScheduler(timezone=settings.timezone)
 
@@ -40,6 +45,19 @@ def business_router(session_factory: async_sessionmaker) -> Router:
                 except Exception: pass
     return router
 
+def public_router() -> Router:
+    router = Router(name="public")
+    @router.message(Command("start"))
+    async def public_start(message: Message):
+        if not WEBAPP_URL:
+            await message.answer("Приложение временно не настроено.")
+            return
+        await message.answer(
+            "🚀 Откройте Partners Portal",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 Открыть приложение", web_app=WebAppInfo(url=WEBAPP_URL))]]),
+        )
+    return router
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global bot
@@ -60,7 +78,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     dp=Dispatcher()
-    dp.include_router(admin_router(SessionLocal, settings)); dp.include_router(business_router(SessionLocal))
+    dp.include_router(admin_router(SessionLocal, settings)); dp.include_router(public_router()); dp.include_router(business_router(SessionLocal))
     scheduler.add_job(build_daily_queue, "cron", hour=10, minute=0, args=[SessionLocal, settings], id="daily_queue", replace_existing=True)
     scheduler.add_job(dispatch_due, "interval", minutes=1, args=[SessionLocal, bot, settings], id="dispatcher", replace_existing=True)
     scheduler.start()
@@ -73,5 +91,8 @@ async def lifespan(app: FastAPI):
         await bot.session.close()
 
 app=FastAPI(title="Telegram Business Follow-up", lifespan=lifespan)
+if (Path(__file__).parent / "web").exists():
+    app.mount("/miniapp", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="miniapp")
+app.include_router(webapp_router)
 @app.get("/health")
 async def health(): return {"ok": True, "automation_enabled": settings.automation_enabled}

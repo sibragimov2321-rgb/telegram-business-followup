@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     min_delay_minutes: int = 20
     max_delay_minutes: int = 45
     automation_enabled: bool = False
+    webapp_url: str = ""
+    secret_key: str = "change-me"
+    support_username: str = ""
 
     @property
     def admins(self) -> set[int]:
